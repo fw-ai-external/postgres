@@ -614,14 +614,18 @@ func (m Migrator) GetRows(currentSchema interface{}, table interface{}) (*sql.Ro
 		name = fmt.Sprintf("%v.%v", currentSchema, table)
 	}
 
-	return m.DB.Session(&gorm.Session{}).Table(name).Limit(1).Scopes(func(d *gorm.DB) *gorm.DB {
-		dialector, _ := m.Dialector.(Dialector)
-		// use simple protocol
-		if !m.DB.PrepareStmt && (dialector.Config != nil && (dialector.Config.DriverName == "" || dialector.Config.DriverName == "pgx")) {
-			d.Statement.Vars = append(d.Statement.Vars, pgx.QuerySimpleProtocol(true))
-		}
-		return d
-	}).Rows()
+	// gorm >= 1.26 binds LIMIT as a query argument, so the probe can no longer
+	// ride the clause builder: the pgx simple-protocol option must be the only
+	// query argument. Issue the probe as raw SQL with the limit inlined and the
+	// option as the sole var, exactly as the old clause path delivered it.
+	vars := []interface{}{}
+	dialector, _ := m.Dialector.(Dialector)
+	// use simple protocol
+	if !m.DB.PrepareStmt && (dialector.Config != nil && (dialector.Config.DriverName == "" || dialector.Config.DriverName == "pgx")) {
+		vars = append(vars, pgx.QuerySimpleProtocol(true))
+	}
+	tx := m.DB.Session(&gorm.Session{})
+	return tx.Raw("SELECT * FROM "+tx.Statement.Quote(name)+" LIMIT 1", vars...).Rows()
 }
 
 func (m Migrator) CurrentSchema(stmt *gorm.Statement, table string) (interface{}, interface{}) {
