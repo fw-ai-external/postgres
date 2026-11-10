@@ -361,7 +361,7 @@ func (m Migrator) AlterColumn(value interface{}, field string) error {
 						if err := m.DB.Exec("ALTER TABLE ? ALTER COLUMN ? SET NOT NULL", m.CurrentTable(stmt), clause.Column{Name: field.DBName}).Error; err != nil {
 							return err
 						}
-					} else {
+					} else if !field.AutoIncrement {
 						if err := m.DB.Exec("ALTER TABLE ? ALTER COLUMN ? DROP NOT NULL", m.CurrentTable(stmt), clause.Column{Name: field.DBName}).Error; err != nil {
 							return err
 						}
@@ -493,7 +493,7 @@ func (m Migrator) ColumnTypes(value interface{}) (columnTypes []gorm.ColumnType,
 			}
 
 			if (strings.HasPrefix(column.DefaultValueValue.String, "nextval('") &&
-				strings.HasSuffix(column.DefaultValueValue.String, "seq'::regclass)")) || (identityIncrement.Valid && identityIncrement.String != "") {
+				strings.HasSuffix(column.DefaultValueValue.String, "'::regclass)")) || (identityIncrement.Valid && identityIncrement.String != "") {
 				column.AutoIncrementValue = sql.NullBool{Bool: true, Valid: true}
 				column.DefaultValueValue = sql.NullString{}
 			}
@@ -646,18 +646,19 @@ func (m Migrator) CreateSequence(tx *gorm.DB, stmt *gorm.Statement, field *schem
 	tableName := table.(string)
 
 	sequenceName := strings.Join([]string{tableName, field.DBName, "seq"}, "_")
-	if err = tx.Exec(`CREATE SEQUENCE IF NOT EXISTS ? AS ?`, clause.Expr{SQL: sequenceName},
+	if err = tx.Exec(`CREATE SEQUENCE IF NOT EXISTS ? AS ?`, clause.Column{Name: sequenceName},
 		clause.Expr{SQL: serialDatabaseType}).Error; err != nil {
 		return err
 	}
 
-	if err := tx.Exec("ALTER TABLE ? ALTER COLUMN ? SET DEFAULT nextval('?')",
-		clause.Expr{SQL: tableName}, clause.Expr{SQL: field.DBName}, clause.Expr{SQL: sequenceName}).Error; err != nil {
+	if err := tx.Exec("ALTER TABLE ? ALTER COLUMN ? SET DEFAULT nextval(?::regclass)",
+		m.CurrentTable(stmt), clause.Column{Name: field.DBName},
+		gorm.Expr(m.Dialector.Explain("$1", stmt.Quote(sequenceName)))).Error; err != nil {
 		return err
 	}
 
 	if err := tx.Exec("ALTER SEQUENCE ? OWNED BY ?.?",
-		clause.Expr{SQL: sequenceName}, clause.Expr{SQL: tableName}, clause.Expr{SQL: field.DBName}).Error; err != nil {
+		clause.Column{Name: sequenceName}, m.CurrentTable(stmt), clause.Column{Name: field.DBName}).Error; err != nil {
 		return err
 	}
 	return

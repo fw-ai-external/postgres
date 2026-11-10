@@ -15,6 +15,19 @@ jobs:
         platform: [ubuntu-latest]
     runs-on: ubuntu-latest
 
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
     steps:
     - name: Set up Go 1.x
       uses: actions/setup-go@v4
@@ -29,4 +42,6 @@ jobs:
       run: go build .
 
     - name: Run tests
+      env:
+        GORM_POSTGRES_DSN: host=localhost user=postgres dbname=postgres sslmode=disable
       run: go test -race -count=1 -v ./...
