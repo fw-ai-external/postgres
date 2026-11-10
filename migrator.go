@@ -677,7 +677,7 @@ func (m Migrator) UpdateSequence(tx *gorm.DB, stmt *gorm.Statement, field *schem
 	}
 
 	if err := tx.Exec("ALTER TABLE ? ALTER COLUMN ? TYPE ?",
-		m.CurrentTable(stmt), clause.Expr{SQL: field.DBName}, clause.Expr{SQL: serialDatabaseType}).Error; err != nil {
+		m.CurrentTable(stmt), clause.Column{Name: field.DBName}, clause.Expr{SQL: serialDatabaseType}).Error; err != nil {
 		return err
 	}
 	return
@@ -696,7 +696,7 @@ func (m Migrator) DeleteSequence(tx *gorm.DB, stmt *gorm.Statement, field *schem
 	}
 
 	if err := tx.Exec("ALTER TABLE ? ALTER COLUMN ? DROP DEFAULT",
-		m.CurrentTable(stmt), clause.Expr{SQL: field.DBName}).Error; err != nil {
+		m.CurrentTable(stmt), clause.Column{Name: field.DBName}).Error; err != nil {
 		return err
 	}
 
