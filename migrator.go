@@ -812,3 +812,58 @@ func (m Migrator) RenameColumn(dst interface{}, oldName, field string) error {
 	m.resetPreparedStmts()
 	return nil
 }
+
+// fieldHasSingleColumnUniqueIndex reports whether field is the only column of a
+// unique index with no WHERE predicate and no expression. Such an index
+// enforces exactly the uniqueness a UNIQUE constraint on the column would.
+func fieldHasSingleColumnUniqueIndex(s *schema.Schema, field *schema.Field) bool {
+	for _, idx := range s.ParseIndexes() {
+		if idx.Class == "UNIQUE" && idx.Where == "" && len(idx.Fields) == 1 &&
+			idx.Fields[0].Field == field && idx.Fields[0].Expression == "" {
+			return true
+		}
+	}
+	return false
+}
+
+// columnUniqueMigrator is the base migrator's MigrateColumnUnique. gorm defines
+// it from v1.25.6, and MigrateColumn calls it from v1.25.7.
+type columnUniqueMigrator interface {
+	MigrateColumnUnique(value interface{}, field *schema.Field, columnType gorm.ColumnType) error
+}
+
+// MigrateColumnUnique skips the unique-constraint step for a column that has no
+// unique tag and is the only column of a plain unique index in the model (no
+// WHERE predicate, no expression): that index already enforces the column's
+// uniqueness.
+//
+// Up to v1.25.6, gorm treated a field that is the only column of a unique index
+// as Unique, so migrations run on those versions could leave UNIQUE
+// constraints on such columns, named other than the "uni_<Table>_<Column>"
+// later gorm versions look for: a column added to an existing table got
+// "<Table>_<Column>_key" from "ADD ... UNIQUE", and AlterColumn above added
+// "idx_<Table>_<Column>" when the column's unique index has a custom name or
+// was added to an existing column. From v1.25.7 the field is no longer
+// Unique, and the base method drops "uni_<Table>_<Column>", which does not
+// exist on those tables: AutoMigrate fails with SQLSTATE 42704. The index
+// enforces the same uniqueness, so the legacy constraint is kept, and this
+// method issues no DDL for the column (MigrateColumn can still change its
+// type, nullability or default). field.Schema is the schema the field was
+// parsed into (the parent schema for an embedded field), so a table-name value
+// is covered too.
+//
+// Every other column keeps the base behavior: one whose unique index is
+// partial, uses an expression or spans several columns, and one with no unique
+// index in the model. The model cannot show that a legacy constraint on such a
+// column is redundant, so the base drop of "uni_<Table>_<Column>" fails with
+// 42704 under any other name, and the mismatch needs a reviewed migration
+// rather than being kept silently.
+func (m Migrator) MigrateColumnUnique(value interface{}, field *schema.Field, columnType gorm.ColumnType) error {
+	if !field.Unique && field.Schema != nil && fieldHasSingleColumnUniqueIndex(field.Schema, field) {
+		return nil
+	}
+	if base, ok := interface{}(m.Migrator).(columnUniqueMigrator); ok {
+		return base.MigrateColumnUnique(value, field, columnType)
+	}
+	return nil
+}
